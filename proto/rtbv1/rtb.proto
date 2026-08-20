@@ -1,0 +1,37 @@
+syntax = "proto3";
+package rtb.v1;
+option go_package = "github.com/ServerCrash358/rtb-engine/proto/rtbv1";
+
+message Item {
+  string id = 1;
+  double bid_floor = 2;      // CPM; 0 = no floor. Enforced ENGINE-SIDE.
+  string bid_floor_cur = 3;  // v1: "USD" only
+}
+
+message BidRequest {
+  string id = 1;             // correlation ID: every log line, metric label, bidder call
+  repeated Item items = 2;   // v1: exactly one
+  int32 tmax = 3;            // INFORMATIONAL ONLY — gRPC deadline is authoritative
+}
+
+message Bid {
+  string id = 1;
+  string item_id = 2;
+  double price = 3;
+  string cur = 4;            // v1: "USD" only
+  string seat_id = 5;
+}
+
+message Seatbid {
+  string seat = 1;
+  repeated Bid bid = 2;
+}
+
+message BidResponse {
+  string id = 1;             // must echo BidRequest.id
+  repeated Seatbid seatbid = 2;  // empty = no bid
+}
+
+service Bidder {
+  rpc GetBid(BidRequest) returns (BidResponse);
+}

@@ -1,0 +1,8 @@
+listen_addr: ":8080"
+metrics_addr: ":9090"
+semaphore_ceiling: 256
+bidders:
+  - seat_id: "bidder-a"
+    endpoint: "localhost:50051"
+  - seat_id: "bidder-b"
+    endpoint: "localhost:50052"
