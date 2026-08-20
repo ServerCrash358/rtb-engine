@@ -1,20 +1,23 @@
 // Package httpapi is the HTTP ingress: JSON codec, validation, and the
-// error taxonomy from the build spec. Phase 0 calls a single bidder
-// directly — no fan-out, no deadlines, no shedding yet.
+// error taxonomy from the build spec. Phase 1 fans a request out to all
+// registered bidders and returns the winner — no deadlines, no shedding
+// yet.
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 
+	"golang.org/x/sync/semaphore"
+
+	"github.com/ServerCrash358/rtb-engine/internal/auction"
 	"github.com/ServerCrash358/rtb-engine/internal/bidder"
 	rtbv1 "github.com/ServerCrash358/rtb-engine/proto/rtbv1"
 )
 
 type Handler struct {
-	Bidder *bidder.Client
+	Bidders []*bidder.Client
+	Sem     *semaphore.Weighted
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,38 +58,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	resp, err := h.Bidder.GetBid(context.Background(), protoReq)
-	if err != nil {
-		log.Printf("request_id=%s bidder=%s error=%v", reqJSON.ID, h.Bidder.SeatID, err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if len(resp.GetSeatbid()) == 0 || len(resp.GetSeatbid()[0].GetBid()) == 0 {
+	winner, ok := auction.Dispatch(r.Context(), h.Sem, h.Bidders, protoReq)
+	if !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	respJSON := toJSON(resp)
+	respJSON := toJSON(reqJSON.ID, winner)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(respJSON)
 }
 
-func toJSON(resp *rtbv1.BidResponse) bidResponseJSON {
-	out := bidResponseJSON{ID: resp.GetId()}
-	for _, sb := range resp.GetSeatbid() {
-		sbJSON := seatbidJSON{Seat: sb.GetSeat()}
-		for _, b := range sb.GetBid() {
-			sbJSON.Bid = append(sbJSON.Bid, bidJSON{
-				ID:     b.GetId(),
-				ItemID: b.GetItemId(),
-				Price:  b.GetPrice(),
-				Cur:    b.GetCur(),
-				SeatID: b.GetSeatId(),
-			})
-		}
-		out.Seatbid = append(out.Seatbid, sbJSON)
+func toJSON(reqID string, winner *rtbv1.Bid) bidResponseJSON {
+	return bidResponseJSON{
+		ID: reqID,
+		Seatbid: []seatbidJSON{
+			{
+				Seat: winner.GetSeatId(),
+				Bid: []bidJSON{
+					{
+						ID:     winner.GetId(),
+						ItemID: winner.GetItemId(),
+						Price:  winner.GetPrice(),
+						Cur:    winner.GetCur(),
+						SeatID: winner.GetSeatId(),
+					},
+				},
+			},
+		},
 	}
-	return out
 }
