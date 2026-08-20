@@ -1,7 +1,6 @@
-// Command engine is the RTB exchange's HTTP ingress server.
-// Phase 1: fans each request out to every registered bidder under a fixed
-// semaphore, fans responses back in, and returns the winner. Still no
-// deadlines or shedding — that's Phase 2.
+// Command engine is the RTB exchange's HTTP ingress server: fans each
+// request out to every registered bidder under a fixed semaphore and a
+// hard deadline, fans responses back in, and returns the winner.
 package main
 
 import (
@@ -11,6 +10,7 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
+	"github.com/ServerCrash358/rtb-engine/internal/auction"
 	"github.com/ServerCrash358/rtb-engine/internal/bidder"
 	"github.com/ServerCrash358/rtb-engine/internal/config"
 	"github.com/ServerCrash358/rtb-engine/internal/httpapi"
@@ -29,7 +29,7 @@ func main() {
 	}
 
 	// Dialed once at startup, reused for the process lifetime.
-	clients := make([]*bidder.Client, 0, len(cfg.Bidders))
+	clients := make([]auction.Caller, 0, len(cfg.Bidders))
 	for _, b := range cfg.Bidders {
 		client, err := bidder.Dial(b.SeatID, b.Endpoint)
 		if err != nil {
