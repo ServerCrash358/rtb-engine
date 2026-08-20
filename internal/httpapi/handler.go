@@ -13,6 +13,7 @@ import (
 
 	"github.com/ServerCrash358/rtb-engine/internal/auction"
 	"github.com/ServerCrash358/rtb-engine/internal/budget"
+	"github.com/ServerCrash358/rtb-engine/internal/metrics"
 	rtbv1 "github.com/ServerCrash358/rtb-engine/proto/rtbv1"
 )
 
@@ -56,6 +57,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// dispatch? This is independent of the per-bidder semaphore check,
 	// which happens inside auction.Dispatch.
 	if remaining := time.Until(deadline); remaining < budget.MinViableBidderWindow {
+		metrics.ShedTotal.WithLabelValues("deadline_below_floor").Inc()
 		h.logOutcome(reqJSON.ID, start, auction.Stats{}, nil, "shed")
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
@@ -102,13 +104,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) logOutcome(reqID string, start time.Time, stats auction.Stats, winner *rtbv1.Bid, outcome string) {
+	elapsed := time.Since(start)
+
+	metrics.RequestsTotal.WithLabelValues(outcome).Inc()
+	metrics.RequestDurationMS.Observe(float64(elapsed) / float64(time.Millisecond))
+
 	seat, price := "", 0.0
 	if winner != nil {
 		seat, price = winner.GetSeatId(), winner.GetPrice()
 	}
 	log.Printf(
 		"request_id=%s eligible_bidder_count=%d responded_bidder_count=%d winner_seat_id=%s winner_price=%v total_latency_ms=%d outcome=%s",
-		reqID, stats.Eligible, stats.Responded, seat, price, time.Since(start).Milliseconds(), outcome,
+		reqID, stats.Eligible, stats.Responded, seat, price, elapsed.Milliseconds(), outcome,
 	)
 }
 

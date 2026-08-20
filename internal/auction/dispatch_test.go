@@ -21,6 +21,10 @@ type fakeBidder struct {
 	err          error
 }
 
+func (f *fakeBidder) SeatID() string {
+	return f.seat
+}
+
 func (f *fakeBidder) GetBid(ctx context.Context, req *rtbv1.BidRequest) (*rtbv1.BidResponse, error) {
 	if f.block {
 		<-ctx.Done()

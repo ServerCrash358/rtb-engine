@@ -5,18 +5,21 @@ package auction
 import (
 	"context"
 	"errors"
+	"time"
 
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/ServerCrash358/rtb-engine/internal/budget"
+	"github.com/ServerCrash358/rtb-engine/internal/metrics"
 	rtbv1 "github.com/ServerCrash358/rtb-engine/proto/rtbv1"
 )
 
 // Caller is the subset of *bidder.Client that Dispatch needs. Satisfied
 // implicitly by *bidder.Client; tests substitute channel-controlled fakes.
 type Caller interface {
+	SeatID() string
 	GetBid(ctx context.Context, req *rtbv1.BidRequest) (*rtbv1.BidResponse, error)
 }
 
@@ -103,27 +106,41 @@ collect:
 		}
 	}
 
+	selectStart := time.Now()
 	floor := floorFor(req)
 	winner, ok := selectWinner(candidates, floor)
+	metrics.WinnerSelectionDurationMS.Observe(msSince(selectStart))
 	return winner, ok, stats
 }
 
 func dispatchOne(ctx context.Context, sem *semaphore.Weighted, idx int, b Caller, req *rtbv1.BidRequest, out chan<- dispatchResult) {
+	seat := b.SeatID()
+
 	if !sem.TryAcquire(1) {
+		metrics.ShedTotal.WithLabelValues("semaphore_full").Inc()
 		out <- dispatchResult{idx: idx, outcome: outcomeShed}
 		return
 	}
-	defer sem.Release(1)
+	metrics.SemaphoreInflight.Inc()
+	defer func() {
+		sem.Release(1)
+		metrics.SemaphoreInflight.Dec()
+	}()
 
 	subCtx, cancel := context.WithTimeout(ctx, budget.BidderBudget)
 	defer cancel()
 
+	callStart := time.Now()
 	resp, err := b.GetBid(subCtx, req)
+	metrics.BidderDurationMS.WithLabelValues(seat).Observe(msSince(callStart))
+
 	if err != nil {
 		if isDeadlineExceeded(subCtx, err) {
+			metrics.BidderTimeoutsTotal.WithLabelValues(seat).Inc()
 			out <- dispatchResult{idx: idx, outcome: outcomeTimeout}
 			return
 		}
+		metrics.BidderErrorsTotal.WithLabelValues(seat).Inc()
 		out <- dispatchResult{idx: idx, outcome: outcomeError}
 		return
 	}
@@ -135,6 +152,10 @@ func dispatchOne(ctx context.Context, sem *semaphore.Weighted, idx int, b Caller
 	}
 
 	out <- dispatchResult{idx: idx, bid: seatbids[0].GetBid()[0], outcome: outcomeBid}
+}
+
+func msSince(start time.Time) float64 {
+	return float64(time.Since(start)) / float64(time.Millisecond)
 }
 
 func isDeadlineExceeded(ctx context.Context, err error) bool {

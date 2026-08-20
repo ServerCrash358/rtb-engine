@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ServerCrash358/rtb-engine/internal/auction"
@@ -44,6 +45,15 @@ func main() {
 	handler := &httpapi.Handler{Bidders: clients, Sem: sem}
 	mux := http.NewServeMux()
 	mux.Handle("/openrtb2/auction", handler)
+
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Printf("metrics listening on %s", cfg.MetricsAddr)
+		if err := http.ListenAndServe(cfg.MetricsAddr, metricsMux); err != nil {
+			log.Fatalf("engine: metrics serve: %v", err)
+		}
+	}()
 
 	log.Printf("engine listening on %s, bidders=%d, semaphore_ceiling=%d", cfg.ListenAddr, len(clients), cfg.SemaphoreCeiling)
 	if err := http.ListenAndServe(cfg.ListenAddr, mux); err != nil {
